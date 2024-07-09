@@ -4,7 +4,7 @@ from PIL import Image, ImageTk, ImageOps, ImageFilter
 import os
 import math
 from ultralytics import YOLO
-
+import cv2
 
 class ImageLoaderApp:
     def __init__(self, root):
@@ -12,27 +12,16 @@ class ImageLoaderApp:
         self.root.title("Image Loader")
         self.root.resizable(False, False)
 
+        self.menu = None
         self.create_menu()
+        self.file_menu = self.create_load_file_menu()
+        self.model_menu = self.create_model_detect_menu()
+        self.tools_menu = self.create_tools_menu()
 
         self.label = tk.Label(root, text="Select an image or a folder to load images")
         self.label.pack(pady=10)
 
-        self.load_model_button = tk.Button(root, text="Load Model (.pt)", command=self.load_model)
-        self.load_model_button.pack(pady=10)
-
-        self.detect_button = tk.Button(root, text="Detect", command=self.detect_objects)
-        self.detect_button.pack(pady=10)
-
-        self.ruler_button = tk.Button(root, text="Enable Ruler", command=self.toggle_ruler)
-        self.ruler_button.pack(pady=10)
-
-        self.selector_button = tk.Button(root, text="Enable Selector", command=self.toggle_selector)
-        self.selector_button.pack(pady=10)
-
-        self.save_button = tk.Button(root, text="Save Image", command=self.save_image)
-        self.save_button.pack(pady=10)
-
-        self.canvas = tk.Canvas(root, width=800, height=600, bg='gray')
+        self.canvas = tk.Canvas(root, width=640, height=640, bg='gray')
         self.canvas.pack()
 
         self.prev_button = tk.Button(root, text="<< Prev", command=self.prev_image)
@@ -54,13 +43,15 @@ class ImageLoaderApp:
         self.current_image_index = -1
         self.image = None
         self.original_image = None
-        self.processed_image = None
+        self.processed_image: Image.ImageFile = None
         self.ruler_enabled = False
         self.selector_enabled = False
+
         self.ruler_start = None
         self.ruler_end = None
         self.ruler_line = None
         self.ruler_text = None
+
         self.scale = 1.0
         self.model = None
         self.selection_rectangle = None
@@ -73,15 +64,43 @@ class ImageLoaderApp:
 
         self.root.bind("<MouseWheel>", self.on_mouse_wheel)
 
-    def create_menu(self):
-        menu = Menu(self.root)
-        self.root.config(menu=menu)
+    def test(self):
+        self.load_image()
+        self.load_model()
+        self.detect_objects()
 
-        file_menu = Menu(menu, tearoff=0)
-        menu.add_cascade(label="File", menu=file_menu)
+    def create_menu(self):
+        self.menu = Menu(self.root)
+        self.root.config(menu=self.menu)
+
+    def create_load_file_menu(self):
+        file_menu = Menu(self.menu, tearoff=1)
+        self.menu.add_cascade(label="File", menu=file_menu)
 
         file_menu.add_command(label="Load Image", command=self.load_image)
         file_menu.add_command(label="Load Folder", command=self.load_folder)
+        file_menu.add_command(label="Save Image", command=self.save_image)
+        file_menu.add_command(label="Test", command=self.test)
+
+        return file_menu
+
+    def create_model_detect_menu(self):
+        detect_menu = Menu(self.menu, tearoff=1)
+        self.menu.add_cascade(label="Detect", menu=detect_menu)
+
+        detect_menu.add_command(label="Load Model(pt)", command=self.load_model)
+        detect_menu.add_command(label="Start Detect", command=self.detect_objects)
+
+        return detect_menu
+
+    def create_tools_menu(self):
+        tools_menu = Menu(self.menu, tearoff=1)
+        self.menu.add_cascade(label="Tools", menu=tools_menu)
+
+        tools_menu.add_command(label="Enable Ruler", command=self.toggle_ruler)
+        tools_menu.add_command(label="Enable Selector", command=self.toggle_selector)
+
+        return tools_menu
 
     def load_image(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif")])
@@ -132,15 +151,15 @@ class ImageLoaderApp:
     def toggle_ruler(self):
         self.ruler_enabled = not self.ruler_enabled
         self.selector_enabled = False
-        self.ruler_button.config(text="Disable Ruler" if self.ruler_enabled else "Enable Ruler")
-        self.selector_button.config(text="Enable Selector")
+        self.tools_menu.entryconfig(1, label="Disable Ruler" if self.ruler_enabled else "Enable Ruler")
+        self.tools_menu.entryconfig(2, label="Enable Selector")
         self.clear_ruler()
 
     def toggle_selector(self):
         self.selector_enabled = not self.selector_enabled
         self.ruler_enabled = False
-        self.selector_button.config(text="Disable Selector" if self.selector_enabled else "Enable Selector")
-        self.ruler_button.config(text="Enable Ruler")
+        self.tools_menu.entryconfig(2, label="Disable Selector" if self.selector_enabled else "Enable Selector")
+        self.tools_menu.entryconfig(1, label="Enable Ruler")
         self.clear_selection()
 
     def on_canvas_click(self, event):
@@ -225,7 +244,7 @@ class ImageLoaderApp:
             self.model_name_label.config(text=f"Model Loaded: {model_name}")
             messagebox.showinfo("Model Loaded", f"Model loaded from {file_path}")
 
-    def detect_objects(self):
+    def detect_objects(self, output_path='output.jpg'):
         if self.processed_image is None:
             messagebox.showerror("Error", "No image loaded.")
             return
@@ -233,33 +252,15 @@ class ImageLoaderApp:
             messagebox.showerror("Error", "No model loaded.")
             return
 
-        # Save the current image to a temporary file
-        img_path = "temp_image.jpg"
-        self.processed_image.save(img_path)
-
-        # Perform detection
-        results = self.model(img_path)
-
-        # Display results on the canvas
-        self.display_results(results)
-
-    def display_results(self, results):
-        # Clear the canvas
-        self.canvas.delete("all")
-
-        # Draw the image
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image)
-
-        # Draw the bounding boxes and labels
+        self.processed_image.save(output_path)
+        results = self.model(output_path)
         for result in results:
-            boxes = result.boxes
-            for box in boxes:
-                x1, y1, x2, y2 = box.xyxy[0]
-                self.canvas.create_rectangle(x1 * self.scale, y1 * self.scale, x2 * self.scale, y2 * self.scale,
-                                             outline='red', width=2)
-                self.canvas.create_text(x1 * self.scale, y1 * self.scale, anchor=tk.NW, text=box.cls_name, fill='red')
+            result.save(output_path)
+        self.processed_image = Image.open(output_path)
 
         self.clear_ruler()
+        self.clear_selection()
+        self.update_image()
 
     def apply_selection(self, x1, y1, x2, y2):
         if self.processed_image:
@@ -270,6 +271,7 @@ class ImageLoaderApp:
 
             cropped_image = self.processed_image.crop((left, top, right, bottom))
             edge_image = cropped_image.filter(ImageFilter.FIND_EDGES)
+
             self.processed_image.paste(edge_image, (left, top))
             self.update_image()
 
