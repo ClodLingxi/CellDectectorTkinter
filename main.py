@@ -1,10 +1,15 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, Menu
+from tkinter import filedialog, messagebox, Menu, Toplevel
 from PIL import Image, ImageTk, ImageOps, ImageFilter
 import os
 import math
 from ultralytics import YOLO
 import cv2
+import numpy as np
+
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
+
 
 class ImageLoaderApp:
     def __init__(self, root):
@@ -186,7 +191,7 @@ class ImageLoaderApp:
 
             x1, y1 = self.ruler_start
             x2, y2 = event.x, event.y
-            self.ruler_line = self.canvas.create_line(x1, y1, x2, y2, fill='red')
+            self.ruler_line = self.canvas.create_line(x1, y1, x2, y2, fill='blue')
             distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2) / self.scale
             self.ruler_text = self.canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=f"{distance:.2f} pixels",
                                                       fill='red')
@@ -239,12 +244,12 @@ class ImageLoaderApp:
     def load_model(self):
         file_path = filedialog.askopenfilename(filetypes=[("PyTorch Model", "*.pt")])
         if file_path:
-            self.model = YOLO(file_path)
+            self.model = file_path
             model_name = os.path.basename(file_path)
             self.model_name_label.config(text=f"Model Loaded: {model_name}")
             messagebox.showinfo("Model Loaded", f"Model loaded from {file_path}")
 
-    def detect_objects(self, output_path='output.jpg'):
+    def detect_objects(self, output_name='output.jpg'):
         if self.processed_image is None:
             messagebox.showerror("Error", "No image loaded.")
             return
@@ -252,17 +257,36 @@ class ImageLoaderApp:
             messagebox.showerror("Error", "No model loaded.")
             return
 
-        self.processed_image.save(output_path)
-        results = self.model(output_path)
-        for result in results:
-            result.save(output_path)
-        self.processed_image = Image.open(output_path)
+        self.processed_image.save(output_name)
+
+        detection_model = AutoDetectionModel.from_pretrained(
+            model_type='yolov8',
+            model_path=self.model,
+            confidence_threshold=0.3,
+            device="cuda:0",  # or 'cuda:0'
+        )
+
+        result = get_sliced_prediction(output_name,
+                                       detection_model,
+                                       slice_height=640,
+                                       slice_width=640,
+                                       overlap_height_ratio=0.2,
+                                       overlap_width_ratio=0.2
+                                       )
+        result.export_visuals(export_dir="demo_data/")
+        self.processed_image = Image.open("demo_data/prediction_visual")
+
+
+        # results = self.model(output_path)
+        # for result in results:
+        #     result.save(output_path)
+        #
 
         self.clear_ruler()
         self.clear_selection()
         self.update_image()
 
-    def apply_selection(self, x1, y1, x2, y2):
+    def apply_selection(self, x1, y1, x2, y2, temp_file='cropped_image.jpg'):
         if self.processed_image:
             left = min(int(x1 / self.scale), int(x2 / self.scale))
             top = min(int(y1 / self.scale), int(y2 / self.scale))
@@ -270,10 +294,11 @@ class ImageLoaderApp:
             bottom = max(int(y1 / self.scale), int(y2 / self.scale))
 
             cropped_image = self.processed_image.crop((left, top, right, bottom))
-            edge_image = cropped_image.filter(ImageFilter.FIND_EDGES)
+            cropped_image.save(temp_file)
 
-            self.processed_image.paste(edge_image, (left, top))
-            self.update_image()
+            editor_window = Toplevel(self.root)
+            editor_window.title("Image Editor")
+            editor = ImageEditor(editor_window, temp_file)
 
     def save_image(self):
         if self.processed_image:
@@ -293,6 +318,128 @@ class ImageLoaderApp:
             if unit:
                 self.unit_scale = pixel_distance / unit
                 self.unit_label.config(text=f"Unit: {self.unit_scale:.2f} pixels per unit")
+
+
+class ImageEditor:
+    def __init__(self, root, file_name):
+        self.root = root
+        self.root.title("Image Adjuster")
+
+        self.image_label = tk.Label(root)
+        self.image_label.pack()
+        self.tk_image = None
+
+        self.radius_label = tk.Label(root)
+        self.radius_label.pack()
+
+        self.threshold1_scale = tk.Scale(root, from_=0, to=200.0, resolution=1, orient=tk.HORIZONTAL,
+                                         label="threshold1", command=self.update_image)
+        self.threshold1_scale.set(50.0)
+        self.threshold1_scale.pack()
+
+        self.threshold2_scale = tk.Scale(root, from_=0, to=200.0, resolution=1, orient=tk.HORIZONTAL,
+                                         label="threshold2", command=self.update_image)
+        self.threshold2_scale.set(30.0)
+        self.threshold2_scale.pack()
+
+        self.threshold3_scale = tk.Scale(root, from_=1, to=300.0, resolution=1, orient=tk.HORIZONTAL,
+                                         label="threshold3", command=self.update_image)
+        self.threshold3_scale.set(1.0)
+        self.threshold3_scale.pack()
+
+        self.len_scale = tk.Scale(root, from_=0, to=1000.0, resolution=1, orient=tk.HORIZONTAL,
+                                         label="min", command=self.update_image)
+        self.len_scale.set(1000.0)
+        self.len_scale.pack()
+
+        self.data = (0, 0, 0)
+        self.file_name = file_name
+        self.update_image()
+
+    def get_distance(self, a, b):
+        return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+    def cell_membrane(self, file_name, threshold1=50, threshold2=30, threshold3=160, min_perimeter=0):
+        output_filename = 'output.jpg'
+        image = cv2.imread(file_name)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        min_shape = min(image.shape[0], image.shape[1])
+        max_shape = min(image.shape[0], image.shape[1])
+        cell_center = (int(image.shape[0] / 2), int(image.shape[1] / 2))
+        result = {'image': image, 'center': cell_center, 'radius': -1}
+
+        im = image.copy()
+        del image
+
+        circle = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1,
+                                  minDist=min_shape / 3, param1=threshold1, param2=threshold2,
+                                  minRadius=int(min_shape / 3), maxRadius=0)
+        radius = 0
+        (x, y) = (0, 0)
+
+        if circle is not None:
+            for a, b, c in circle[0]:
+                if c > radius:
+                    print(radius)
+                    (x, y) = (a, b)
+                    radius = c
+
+                center = (int(x), int(y))
+                radius = int(radius)
+
+                cv2.circle(im, center, radius, (0, 255, 0), 2)
+
+                result = {'image': im, 'center': center, 'radius': radius}
+
+        cv2.imwrite(output_filename, im)
+        del im
+
+        image = cv2.imread(output_filename, cv2.IMREAD_GRAYSCALE)
+        _, binary_image = cv2.threshold(image, threshold3, 255, cv2.THRESH_BINARY)
+
+        result_count = 0
+        inner_radius = 0
+        for _radius in range(int(result['radius'] / 3), result['radius']):
+
+            mask = np.zeros_like(binary_image, dtype=np.uint8)
+
+            cv2.circle(mask, result['center'], _radius, 255, -1)
+
+            circle_area = cv2.bitwise_and(binary_image, binary_image, mask=mask)
+            count = np.sum(circle_area == 0)
+
+            if _radius > 2 and result_count > count:
+                inner_radius = _radius
+                break
+            result_count = count
+
+        image = cv2.imread(file_name)
+        cv2.circle(image, result['center'], inner_radius, (0, 0, 255), 1)
+        cv2.circle(image, result['center'], result['radius'], (0, 255, 0), 1)
+        cv2.imwrite(output_filename, image)
+
+        return output_filename, inner_radius, result['radius']
+
+    def update_image(self, event=None):
+        if self.file_name:
+            threshold1 = self.threshold1_scale.get()
+            threshold2 = self.threshold2_scale.get()
+            threshold3 = self.threshold3_scale.get()
+
+            if (threshold1, threshold2, threshold3) == self.data:
+                return
+
+            self.data = (threshold1, threshold2, threshold3)
+
+            len_scale = self.len_scale.get()
+
+            output, inner_radius, outer_radius = self.cell_membrane(self.file_name, threshold1, threshold2, threshold3, len_scale)
+
+            final_image = Image.open(output)
+            self.tk_image = ImageTk.PhotoImage(final_image)
+            self.image_label.config(image=self.tk_image)
+            self.radius_label.config(text=str(abs(outer_radius - inner_radius)))
 
 
 if __name__ == "__main__":
