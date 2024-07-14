@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, Menu, Toplevel
+from tkinter import ttk
+
 from PIL import Image, ImageTk, ImageOps, ImageFilter
 import os
 import math
@@ -11,7 +13,7 @@ from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 
 
-class ImageLoaderApp:
+class ImageLoaderApp(ttk.Frame):
     def __init__(self, root):
         self.root = root
         self.root.title("Image Loader")
