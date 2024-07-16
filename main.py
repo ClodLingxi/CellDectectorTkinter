@@ -5,7 +5,6 @@ from tkinter import ttk
 from PIL import Image, ImageTk, ImageOps, ImageFilter
 import os
 import math
-from ultralytics import YOLO
 import cv2
 import numpy as np
 
@@ -13,8 +12,9 @@ from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 
 
-class ImageLoaderApp(ttk.Frame):
+class ImageLoaderApp:
     def __init__(self, root):
+        self.image_id = None
         self.root = root
         self.root.title("Image Loader")
         self.root.resizable(False, False)
@@ -27,9 +27,6 @@ class ImageLoaderApp(ttk.Frame):
 
         self.label = tk.Label(root, text="Select an image or a folder to load images")
         self.label.pack(pady=10)
-
-        self.canvas = tk.Canvas(root, width=640, height=640, bg='gray')
-        self.canvas.pack()
 
         self.prev_button = tk.Button(root, text="<< Prev", command=self.prev_image)
         self.prev_button.pack(side=tk.LEFT, padx=10)
@@ -65,11 +62,23 @@ class ImageLoaderApp(ttk.Frame):
         self.selection_start = None
         self.unit_scale = 1.0
 
+        self.frame = tk.Frame(root)
+        self.frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(self.frame, bg='gray')
+        self.canvas.grid(row=0, column=0, sticky='nsew')
+
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
+        self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
 
-        self.root.bind("<MouseWheel>", self.on_mouse_wheel)
+        self.scroll_x = tk.Scrollbar(self.frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        self.scroll_y = tk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.canvas.yview)
+
+        self.canvas.configure(xscrollcommand=self.scroll_x.set, yscrollcommand=self.scroll_y.set)
+        self.scroll_x.grid(row=1, column=0, sticky='ew')
+        self.scroll_y.grid(row=0, column=1, sticky='ns')
 
     def test(self):
         self.load_image()
@@ -130,6 +139,7 @@ class ImageLoaderApp(ttk.Frame):
             img_path = self.image_files[self.current_image_index]
             self.original_image = Image.open(img_path)
             self.processed_image = self.original_image.copy()
+
             self.scale = 1.0
             self.update_image()
             self.root.title(f"Image Loader - {os.path.basename(img_path)}")
@@ -235,12 +245,15 @@ class ImageLoaderApp(ttk.Frame):
 
     def update_image(self):
         if self.processed_image:
+            self.canvas.delete(self.image_id)
+
             img = self.processed_image.copy()
             new_size = (int(self.processed_image.width * self.scale), int(self.processed_image.height * self.scale))
             img = img.resize(new_size, Image.Resampling.LANCZOS)
             self.image = ImageTk.PhotoImage(img)
-            self.canvas.config(width=new_size[0], height=new_size[1])
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image)
+
+            self.image_id = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image)
+            self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
             self.clear_ruler()
 
     def load_model(self):
@@ -277,7 +290,6 @@ class ImageLoaderApp(ttk.Frame):
                                        )
         result.export_visuals(export_dir="demo_data/")
         self.processed_image = Image.open("demo_data/prediction_visual")
-
 
         # results = self.model(output_path)
         # for result in results:
@@ -334,34 +346,55 @@ class ImageEditor:
         self.radius_label = tk.Label(root)
         self.radius_label.pack()
 
-        self.threshold1_scale = tk.Scale(root, from_=0, to=200.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="threshold1", command=self.update_image)
-        self.threshold1_scale.set(50.0)
-        self.threshold1_scale.pack()
+        self.threshold1_scale, self.threshold1_scale_entry = self.create_scale_entry(root, "Threshold1",
+                                                                                     0, 200, 50, 1,
+                                                                                     self.update_image)
 
-        self.threshold2_scale = tk.Scale(root, from_=0, to=200.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="threshold2", command=self.update_image)
-        self.threshold2_scale.set(30.0)
-        self.threshold2_scale.pack()
+        self.threshold2_scale, self.threshold2_scale_entry = self.create_scale_entry(root, "Threshold2",
+                                                                                     0, 200, 30, 1,
+                                                                                     self.update_image)
 
-        self.threshold3_scale = tk.Scale(root, from_=1, to=300.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="threshold3", command=self.update_image)
-        self.threshold3_scale.set(1.0)
-        self.threshold3_scale.pack()
-
-        self.len_scale = tk.Scale(root, from_=0, to=1000.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="min", command=self.update_image)
-        self.len_scale.set(1000.0)
-        self.len_scale.pack()
+        self.threshold3_scale, self.threshold3_scale_entry = self.create_scale_entry(root, "Threshold2",
+                                                                                     1, 300, 1, 1,
+                                                                                     self.update_image)
 
         self.data = (0, 0, 0)
         self.file_name = file_name
         self.update_image()
 
+    def create_scale_entry(self, root, label, from_, to, initial, resolution, command):
+        frame = tk.Frame(root)
+        frame.pack()
+
+        scale = tk.Scale(frame, from_=from_, to=to, resolution=resolution, orient=tk.HORIZONTAL, label=label,
+                         command=lambda v: self.on_scale_change(v, scale, entry, command))
+        scale.set(initial)
+        scale.pack(side=tk.LEFT)
+
+        entry = tk.Entry(frame, width=5)
+        entry.insert(0, str(initial))
+        entry.pack(side=tk.LEFT)
+        entry.bind("<Return>", lambda event: self.on_entry_change(scale, entry, command))
+
+        return scale, entry
+
+    def on_scale_change(self, value, scale, entry, command):
+        entry.delete(0, tk.END)
+        entry.insert(0, str(value))
+        command()
+
+    def on_entry_change(self, scale, entry, command):
+        try:
+            value = float(entry.get())
+            scale.set(value)
+            command()
+        except ValueError:
+            pass
+
     def get_distance(self, a, b):
         return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
-    def cell_membrane(self, file_name, threshold1=50, threshold2=30, threshold3=160, min_perimeter=0):
+    def cell_membrane(self, file_name, threshold1=50, threshold2=30, threshold3=160):
         output_filename = 'output.jpg'
         image = cv2.imread(file_name)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -417,6 +450,11 @@ class ImageEditor:
             result_count = count
 
         image = cv2.imread(file_name)
+
+        if result['radius'] == -1:
+            print('No Circle')
+            return output_filename, inner_radius, 0
+
         cv2.circle(image, result['center'], inner_radius, (0, 0, 255), 1)
         cv2.circle(image, result['center'], result['radius'], (0, 255, 0), 1)
         cv2.imwrite(output_filename, image)
@@ -434,9 +472,7 @@ class ImageEditor:
 
             self.data = (threshold1, threshold2, threshold3)
 
-            len_scale = self.len_scale.get()
-
-            output, inner_radius, outer_radius = self.cell_membrane(self.file_name, threshold1, threshold2, threshold3, len_scale)
+            output, inner_radius, outer_radius = self.cell_membrane(self.file_name, threshold1, threshold2, threshold3)
 
             final_image = Image.open(output)
             self.tk_image = ImageTk.PhotoImage(final_image)
