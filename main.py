@@ -60,7 +60,7 @@ class ImageLoaderApp:
         self.model = None
         self.selection_rectangle = None
         self.selection_start = None
-        self.unit_scale = 1.0
+        self.unit_scale = None
 
         self.frame = tk.Frame(root)
         self.frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -180,19 +180,21 @@ class ImageLoaderApp:
         self.clear_selection()
 
     def on_canvas_click(self, event):
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
         if self.ruler_enabled:
             if self.ruler_start is None:
-                self.ruler_start = (event.x, event.y)
+                self.ruler_start = (x, y)
             else:
-                self.ruler_end = (event.x, event.y)
+                self.ruler_end = (x, y)
                 self.calculate_unit_scale()
                 self.ruler_start = None
                 self.ruler_end = None
         elif self.selector_enabled:
-            self.selection_start = (event.x, event.y)
+            self.selection_start = (x, y)
             if self.selection_rectangle:
                 self.canvas.delete(self.selection_rectangle)
-            self.selection_rectangle = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='blue')
+            self.selection_rectangle = self.canvas.create_rectangle(x, y, x, y, outline='blue')
 
     def on_mouse_move(self, event):
         if self.ruler_enabled and self.ruler_start is not None:
@@ -202,21 +204,25 @@ class ImageLoaderApp:
                 self.canvas.delete(self.ruler_text)
 
             x1, y1 = self.ruler_start
-            x2, y2 = event.x, event.y
+            x2 = self.canvas.canvasx(event.x)
+            y2 = self.canvas.canvasy(event.y)
             self.ruler_line = self.canvas.create_line(x1, y1, x2, y2, fill='blue')
             distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2) / self.scale
             self.ruler_text = self.canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=f"{distance:.2f} pixels",
                                                       fill='red')
         elif self.selector_enabled and self.selection_start is not None:
             x1, y1 = self.selection_start
-            x2, y2 = event.x, event.y
+            x2 = self.canvas.canvasx(event.x)
+            y2 = self.canvas.canvasy(event.y)
             self.canvas.coords(self.selection_rectangle, x1, y1, x2, y2)
 
     def on_mouse_release(self, event):
         if self.selector_enabled and self.selection_start is not None:
             x1, y1 = self.selection_start
-            x2, y2 = event.x, event.y
+            x2 = self.canvas.canvasx(event.x)
+            y2 = self.canvas.canvasy(event.y)
             self.apply_selection(x1, y1, x2, y2)
+            self.clear_selection()
             self.selection_start = None
 
     def clear_ruler(self):
@@ -312,7 +318,7 @@ class ImageLoaderApp:
 
             editor_window = Toplevel(self.root)
             editor_window.title("Image Editor")
-            editor = ImageEditor(editor_window, temp_file)
+            editor = ImageEditor(editor_window, temp_file, self.unit_scale)
 
     def save_image(self):
         if self.processed_image:
@@ -330,14 +336,15 @@ class ImageLoaderApp:
             pixel_distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
             unit = tk.simpledialog.askfloat("Set Unit", "Enter the real-world distance for the selected pixels:")
             if unit:
-                self.unit_scale = pixel_distance / unit
-                self.unit_label.config(text=f"Unit: {self.unit_scale:.2f} pixels per unit")
+                self.unit_scale = unit / pixel_distance
+                self.unit_label.config(text=f"Unit: {self.unit_scale:.2f} units per pixels")
 
 
 class ImageEditor:
-    def __init__(self, root, file_name):
+    def __init__(self, root, file_name, unit_scale):
         self.root = root
         self.root.title("Image Adjuster")
+        self.unit_scale = unit_scale
 
         self.image_label = tk.Label(root)
         self.image_label.pack()
@@ -351,11 +358,11 @@ class ImageEditor:
                                                                                      self.update_image)
 
         self.threshold2_scale, self.threshold2_scale_entry = self.create_scale_entry(root, "Threshold2",
-                                                                                     0, 200, 30, 1,
+                                                                                     0, 200, 50, 1,
                                                                                      self.update_image)
 
-        self.threshold3_scale, self.threshold3_scale_entry = self.create_scale_entry(root, "Threshold2",
-                                                                                     1, 300, 1, 1,
+        self.threshold3_scale, self.threshold3_scale_entry = self.create_scale_entry(root, "Threshold3",
+                                                                                     1, 300, 170, 1,
                                                                                      self.update_image)
 
         self.data = (0, 0, 0)
@@ -452,7 +459,7 @@ class ImageEditor:
         image = cv2.imread(file_name)
 
         if result['radius'] == -1:
-            print('No Circle')
+            self.radius_label.config(text="No Circle, Please fine-tuning threshold1 and threshold2")
             return output_filename, inner_radius, 0
 
         cv2.circle(image, result['center'], inner_radius, (0, 0, 255), 1)
@@ -477,8 +484,13 @@ class ImageEditor:
             final_image = Image.open(output)
             self.tk_image = ImageTk.PhotoImage(final_image)
             self.image_label.config(image=self.tk_image)
-            self.radius_label.config(text=str(abs(outer_radius - inner_radius)))
-
+            if outer_radius > inner_radius:
+                if self.unit_scale is not None:
+                    self.radius_label.config(text=str((outer_radius - inner_radius) * self.unit_scale) + " Unit")
+                else:
+                    self.radius_label.config(text=str(outer_radius - inner_radius) + " Pixels (Unknown Unit)")
+            else:
+                self.radius_label.config(text="Err Radius, Please fine-tuning threshold3")
 
 if __name__ == "__main__":
     root = tk.Tk()
