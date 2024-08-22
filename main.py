@@ -1,20 +1,20 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, Menu, Toplevel
-from tkinter import ttk
+import ctypes
+from tkinter import *
 
 from PIL import Image, ImageTk, ImageOps, ImageFilter
 import os
 import math
-from ultralytics import YOLO
 import cv2
 import numpy as np
 
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 
-
-class ImageLoaderApp(ttk.Frame):
+class ImageLoaderApp:
     def __init__(self, root):
+        self.image_id = None
         self.root = root
         self.root.title("Image Loader")
         self.root.resizable(False, False)
@@ -27,9 +27,6 @@ class ImageLoaderApp(ttk.Frame):
 
         self.label = tk.Label(root, text="Select an image or a folder to load images")
         self.label.pack(pady=10)
-
-        self.canvas = tk.Canvas(root, width=640, height=640, bg='gray')
-        self.canvas.pack()
 
         self.prev_button = tk.Button(root, text="<< Prev", command=self.prev_image)
         self.prev_button.pack(side=tk.LEFT, padx=10)
@@ -63,13 +60,32 @@ class ImageLoaderApp(ttk.Frame):
         self.model = None
         self.selection_rectangle = None
         self.selection_start = None
-        self.unit_scale = 1.0
+        self.unit_scale = None
+
+        self.frame = tk.Frame(root)
+        self.frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(self.frame, bg='gray')
+        self.canvas.grid(row=0, column=0, sticky='nsew')
 
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
+        self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
 
-        self.root.bind("<MouseWheel>", self.on_mouse_wheel)
+        self.scroll_x = tk.Scrollbar(self.frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        self.scroll_y = tk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.canvas.yview)
+
+        self.canvas.configure(xscrollcommand=self.scroll_x.set, yscrollcommand=self.scroll_y.set)
+        self.scroll_x.grid(row=1, column=0, sticky='ew')
+        self.scroll_y.grid(row=0, column=1, sticky='ns')
+
+        # 调用api设置成由应用程序缩放
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        # 调用api获得当前的缩放因子
+        scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0)
+        # 设置缩放因子
+        root.tk.call('tk', 'scaling', scale_factor / 75)
 
     def test(self):
         self.load_image()
@@ -130,6 +146,7 @@ class ImageLoaderApp(ttk.Frame):
             img_path = self.image_files[self.current_image_index]
             self.original_image = Image.open(img_path)
             self.processed_image = self.original_image.copy()
+
             self.scale = 1.0
             self.update_image()
             self.root.title(f"Image Loader - {os.path.basename(img_path)}")
@@ -170,19 +187,21 @@ class ImageLoaderApp(ttk.Frame):
         self.clear_selection()
 
     def on_canvas_click(self, event):
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
         if self.ruler_enabled:
             if self.ruler_start is None:
-                self.ruler_start = (event.x, event.y)
+                self.ruler_start = (x, y)
             else:
-                self.ruler_end = (event.x, event.y)
+                self.ruler_end = (x, y)
                 self.calculate_unit_scale()
                 self.ruler_start = None
                 self.ruler_end = None
         elif self.selector_enabled:
-            self.selection_start = (event.x, event.y)
+            self.selection_start = (x, y)
             if self.selection_rectangle:
                 self.canvas.delete(self.selection_rectangle)
-            self.selection_rectangle = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='blue')
+            self.selection_rectangle = self.canvas.create_rectangle(x, y, x, y, outline='blue')
 
     def on_mouse_move(self, event):
         if self.ruler_enabled and self.ruler_start is not None:
@@ -192,21 +211,25 @@ class ImageLoaderApp(ttk.Frame):
                 self.canvas.delete(self.ruler_text)
 
             x1, y1 = self.ruler_start
-            x2, y2 = event.x, event.y
+            x2 = self.canvas.canvasx(event.x)
+            y2 = self.canvas.canvasy(event.y)
             self.ruler_line = self.canvas.create_line(x1, y1, x2, y2, fill='blue')
             distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2) / self.scale
             self.ruler_text = self.canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=f"{distance:.2f} pixels",
                                                       fill='red')
         elif self.selector_enabled and self.selection_start is not None:
             x1, y1 = self.selection_start
-            x2, y2 = event.x, event.y
+            x2 = self.canvas.canvasx(event.x)
+            y2 = self.canvas.canvasy(event.y)
             self.canvas.coords(self.selection_rectangle, x1, y1, x2, y2)
 
     def on_mouse_release(self, event):
         if self.selector_enabled and self.selection_start is not None:
             x1, y1 = self.selection_start
-            x2, y2 = event.x, event.y
+            x2 = self.canvas.canvasx(event.x)
+            y2 = self.canvas.canvasy(event.y)
             self.apply_selection(x1, y1, x2, y2)
+            self.clear_selection()
             self.selection_start = None
 
     def clear_ruler(self):
@@ -235,12 +258,15 @@ class ImageLoaderApp(ttk.Frame):
 
     def update_image(self):
         if self.processed_image:
+            self.canvas.delete(self.image_id)
+
             img = self.processed_image.copy()
             new_size = (int(self.processed_image.width * self.scale), int(self.processed_image.height * self.scale))
             img = img.resize(new_size, Image.Resampling.LANCZOS)
             self.image = ImageTk.PhotoImage(img)
-            self.canvas.config(width=new_size[0], height=new_size[1])
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image)
+
+            self.image_id = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image)
+            self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
             self.clear_ruler()
 
     def load_model(self):
@@ -278,7 +304,6 @@ class ImageLoaderApp(ttk.Frame):
         result.export_visuals(export_dir="demo_data/")
         self.processed_image = Image.open("demo_data/prediction_visual")
 
-
         # results = self.model(output_path)
         # for result in results:
         #     result.save(output_path)
@@ -300,7 +325,7 @@ class ImageLoaderApp(ttk.Frame):
 
             editor_window = Toplevel(self.root)
             editor_window.title("Image Editor")
-            editor = ImageEditor(editor_window, temp_file)
+            editor = ImageEditor(editor_window, temp_file, self.unit_scale)
 
     def save_image(self):
         if self.processed_image:
@@ -318,50 +343,73 @@ class ImageLoaderApp(ttk.Frame):
             pixel_distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
             unit = tk.simpledialog.askfloat("Set Unit", "Enter the real-world distance for the selected pixels:")
             if unit:
-                self.unit_scale = pixel_distance / unit
-                self.unit_label.config(text=f"Unit: {self.unit_scale:.2f} pixels per unit")
+                self.unit_scale = unit / pixel_distance
+                self.unit_label.config(text=f"Unit: {self.unit_scale:.2f} units per pixels")
 
 
 class ImageEditor:
-    def __init__(self, root, file_name):
+    def __init__(self, root, file_name, unit_scale):
         self.root = root
         self.root.title("Image Adjuster")
+        self.unit_scale = unit_scale
 
-        self.image_label = tk.Label(root)
-        self.image_label.pack()
-        self.tk_image = None
+        self.canvas = tk.Canvas(self.root, bg='gray', height=640, width=640)
+        self.canvas.pack()
+        self.image = None
 
         self.radius_label = tk.Label(root)
         self.radius_label.pack()
 
-        self.threshold1_scale = tk.Scale(root, from_=0, to=200.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="threshold1", command=self.update_image)
-        self.threshold1_scale.set(50.0)
-        self.threshold1_scale.pack()
+        self.threshold1_scale, self.threshold1_scale_entry = self.create_scale_entry(root, "Threshold1",
+                                                                                     0, 200, 50, 1,
+                                                                                     self.update_image)
 
-        self.threshold2_scale = tk.Scale(root, from_=0, to=200.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="threshold2", command=self.update_image)
-        self.threshold2_scale.set(30.0)
-        self.threshold2_scale.pack()
+        self.threshold2_scale, self.threshold2_scale_entry = self.create_scale_entry(root, "Threshold2",
+                                                                                     0, 200, 50, 1,
+                                                                                     self.update_image)
 
-        self.threshold3_scale = tk.Scale(root, from_=1, to=300.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="threshold3", command=self.update_image)
-        self.threshold3_scale.set(1.0)
-        self.threshold3_scale.pack()
+        self.threshold3_scale, self.threshold3_scale_entry = self.create_scale_entry(root, "Threshold3",
+                                                                                     1, 300, 170, 1,
+                                                                                     self.update_image)
 
-        self.len_scale = tk.Scale(root, from_=0, to=1000.0, resolution=1, orient=tk.HORIZONTAL,
-                                         label="min", command=self.update_image)
-        self.len_scale.set(1000.0)
-        self.len_scale.pack()
-
+        self.scale = 1.0
         self.data = (0, 0, 0)
         self.file_name = file_name
         self.update_image()
 
+    def create_scale_entry(self, root, label, from_, to, initial, resolution, command):
+        frame = tk.Frame(root)
+        frame.pack()
+
+        scale = tk.Scale(frame, from_=from_, to=to, resolution=resolution, orient=tk.HORIZONTAL, label=label,
+                         command=lambda v: self.on_scale_change(v, scale, entry, command))
+        scale.set(initial)
+        scale.pack(side=tk.LEFT)
+
+        entry = tk.Entry(frame, width=5)
+        entry.insert(0, str(initial))
+        entry.pack(side=tk.LEFT)
+        entry.bind("<Return>", lambda event: self.on_entry_change(scale, entry, command))
+
+        return scale, entry
+
+    def on_scale_change(self, value, scale, entry, command):
+        entry.delete(0, tk.END)
+        entry.insert(0, str(value))
+        command()
+
+    def on_entry_change(self, scale, entry, command):
+        try:
+            value = float(entry.get())
+            scale.set(value)
+            command()
+        except ValueError:
+            pass
+
     def get_distance(self, a, b):
         return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
-    def cell_membrane(self, file_name, threshold1=50, threshold2=30, threshold3=160, min_perimeter=0):
+    def cell_membrane(self, file_name, threshold1=50, threshold2=30, threshold3=160):
         output_filename = 'output.jpg'
         image = cv2.imread(file_name)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -417,6 +465,11 @@ class ImageEditor:
             result_count = count
 
         image = cv2.imread(file_name)
+
+        if result['radius'] == -1:
+            self.radius_label.config(text="No Circle, Please fine-tuning threshold1 and threshold2")
+            return output_filename, inner_radius, 0
+
         cv2.circle(image, result['center'], inner_radius, (0, 0, 255), 1)
         cv2.circle(image, result['center'], result['radius'], (0, 255, 0), 1)
         cv2.imwrite(output_filename, image)
@@ -424,6 +477,7 @@ class ImageEditor:
         return output_filename, inner_radius, result['radius']
 
     def update_image(self, event=None):
+
         if self.file_name:
             threshold1 = self.threshold1_scale.get()
             threshold2 = self.threshold2_scale.get()
@@ -434,14 +488,25 @@ class ImageEditor:
 
             self.data = (threshold1, threshold2, threshold3)
 
-            len_scale = self.len_scale.get()
+            output, inner_radius, outer_radius = self.cell_membrane(self.file_name, threshold1, threshold2, threshold3)
 
-            output, inner_radius, outer_radius = self.cell_membrane(self.file_name, threshold1, threshold2, threshold3, len_scale)
+            self.image = Image.open(output)
+            img_width, img_height = self.image.size
+            canvas_width, canvas_height = 640, 640
 
-            final_image = Image.open(output)
-            self.tk_image = ImageTk.PhotoImage(final_image)
-            self.image_label.config(image=self.tk_image)
-            self.radius_label.config(text=str(abs(outer_radius - inner_radius)))
+            self.scale = min(canvas_width / img_width, canvas_height / img_height)
+            new_size = (int(self.image.width * self.scale), int(self.image.height * self.scale))
+            self.image = self.image.resize(new_size, Image.Resampling.LANCZOS)
+            self.image = ImageTk.PhotoImage(self.image)
+
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image)
+            if outer_radius > inner_radius:
+                if self.unit_scale is not None:
+                    self.radius_label.config(text=str((outer_radius - inner_radius) * self.unit_scale) + " Unit")
+                else:
+                    self.radius_label.config(text=str(outer_radius - inner_radius) + " Pixels (Unknown Unit)")
+            else:
+                self.radius_label.config(text="Err Radius, Please fine-tuning threshold3")
 
 
 if __name__ == "__main__":
