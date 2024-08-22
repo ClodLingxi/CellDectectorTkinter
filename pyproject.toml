@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "celldetectorsoftware"
+version = "0.1.0"
+description = ""
+authors = ["Lingxi <2863878907@qq.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+
+[tool.poetry.group.dev.dependencies]
+numpy = "^1.26.4"
+opencv-python = "^4.10.0.84"
+pillow = "^10.4.0"
+ultralytics = "^8.2.50"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
