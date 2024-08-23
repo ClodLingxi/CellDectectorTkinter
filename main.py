@@ -80,12 +80,12 @@ class ImageLoaderApp:
         self.scroll_x.grid(row=1, column=0, sticky='ew')
         self.scroll_y.grid(row=0, column=1, sticky='ns')
 
-        # 调用api设置成由应用程序缩放
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        # 调用api获得当前的缩放因子
-        scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0)
-        # 设置缩放因子
-        root.tk.call('tk', 'scaling', scale_factor / 75)
+        # # 调用api设置成由应用程序缩放
+        # ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        # # 调用api获得当前的缩放因子
+        # scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0)
+        # # 设置缩放因子
+        # root.tk.call('tk', 'scaling', scale_factor / 75)
 
     def test(self):
         self.load_image()
@@ -347,6 +347,12 @@ class ImageLoaderApp:
                 self.unit_label.config(text=f"Unit: {self.unit_scale:.2f} units per pixels")
 
 
+def on_scale_change(value, scale, entry, command):
+    entry.delete(0, tk.END)
+    entry.insert(0, str(value))
+    command()
+
+
 class ImageEditor:
     def __init__(self, root, file_name, unit_scale):
         self.root = root
@@ -354,21 +360,25 @@ class ImageEditor:
         self.unit_scale = unit_scale
 
         self.canvas = tk.Canvas(self.root, bg='gray', height=640, width=640)
-        self.canvas.pack()
+        self.canvas.grid(row=0, column=0, rowspan=4, columnspan=4)
         self.image = None
 
         self.radius_label = tk.Label(root)
-        self.radius_label.pack()
+        self.radius_label.grid(row=0, column=5)
 
-        self.threshold1_scale, self.threshold1_scale_entry = self.create_scale_entry(root, "Threshold1",
+        self.frame = tk.Frame(self.root)
+        self.frame.grid(row=1, column=5, rowspan=4)
+
+
+        self.threshold1_scale, self.threshold1_scale_entry = self.create_scale_entry(self.frame, "Threshold1",
                                                                                      0, 200, 50, 1,
                                                                                      self.update_image)
 
-        self.threshold2_scale, self.threshold2_scale_entry = self.create_scale_entry(root, "Threshold2",
+        self.threshold2_scale, self.threshold2_scale_entry = self.create_scale_entry(self.frame, "Threshold2",
                                                                                      0, 200, 50, 1,
                                                                                      self.update_image)
 
-        self.threshold3_scale, self.threshold3_scale_entry = self.create_scale_entry(root, "Threshold3",
+        self.threshold3_scale, self.threshold3_scale_entry = self.create_scale_entry(self.frame, "Threshold3",
                                                                                      1, 300, 170, 1,
                                                                                      self.update_image)
 
@@ -382,7 +392,7 @@ class ImageEditor:
         frame.pack()
 
         scale = tk.Scale(frame, from_=from_, to=to, resolution=resolution, orient=tk.HORIZONTAL, label=label,
-                         command=lambda v: self.on_scale_change(v, scale, entry, command))
+                         command=lambda v: on_scale_change(v, scale, entry, command))
         scale.set(initial)
         scale.pack(side=tk.LEFT)
 
@@ -393,12 +403,8 @@ class ImageEditor:
 
         return scale, entry
 
-    def on_scale_change(self, value, scale, entry, command):
-        entry.delete(0, tk.END)
-        entry.insert(0, str(value))
-        command()
-
-    def on_entry_change(self, scale, entry, command):
+    @staticmethod
+    def on_entry_change(scale, entry, command):
         try:
             value = float(entry.get())
             scale.set(value)
@@ -406,10 +412,11 @@ class ImageEditor:
         except ValueError:
             pass
 
-    def get_distance(self, a, b):
+    @staticmethod
+    def get_distance(a, b):
         return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
-    def cell_membrane(self, file_name, threshold1=50, threshold2=30, threshold3=160):
+    def cell_membrane(self, file_name, threshold1=50.0, threshold2=30.0, threshold3=160.0):
         output_filename = 'output.jpg'
         image = cv2.imread(file_name)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
