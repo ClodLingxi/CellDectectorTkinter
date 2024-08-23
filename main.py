@@ -363,19 +363,22 @@ class ImageEditor:
         self.canvas.grid(row=0, column=0, rowspan=4, columnspan=4)
         self.image = None
 
-        self.radius_label = tk.Label(root)
-        self.radius_label.grid(row=0, column=5)
+        self.root.grid_columnconfigure(0, weight=5)
+        self.root.grid_columnconfigure(1, weight=1)
+
+        self.radius_label = tk.Label(self.root)
+        self.radius_label.grid(row=0, column=5, columnspan=4)
 
         self.frame = tk.Frame(self.root)
-        self.frame.grid(row=1, column=5, rowspan=4)
+        self.frame.grid(row=1, column=5, rowspan=4, columnspan=4)
 
 
         self.threshold1_scale, self.threshold1_scale_entry = self.create_scale_entry(self.frame, "Threshold1",
-                                                                                     0, 200, 50, 1,
+                                                                                     1, 200, 50, 1,
                                                                                      self.update_image)
 
         self.threshold2_scale, self.threshold2_scale_entry = self.create_scale_entry(self.frame, "Threshold2",
-                                                                                     0, 200, 50, 1,
+                                                                                     1, 200, 50, 1,
                                                                                      self.update_image)
 
         self.threshold3_scale, self.threshold3_scale_entry = self.create_scale_entry(self.frame, "Threshold3",
@@ -400,8 +403,17 @@ class ImageEditor:
         entry.insert(0, str(initial))
         entry.pack(side=tk.LEFT)
         entry.bind("<Return>", lambda event: self.on_entry_change(scale, entry, command))
+        entry.bind("<Left>", lambda event: self.adjust_scale(scale, -resolution))
+        entry.bind("<Right>", lambda event: self.adjust_scale(scale, resolution))
 
         return scale, entry
+
+    @staticmethod
+    def adjust_scale(scale, resolution):
+        try:
+            scale.set(scale.get() + resolution)
+        except ValueError:
+            pass
 
     @staticmethod
     def on_entry_change(scale, entry, command):
@@ -438,7 +450,6 @@ class ImageEditor:
         if circle is not None:
             for a, b, c in circle[0]:
                 if c > radius:
-                    print(radius)
                     (x, y) = (a, b)
                     radius = c
 
@@ -507,11 +518,14 @@ class ImageEditor:
             self.image = ImageTk.PhotoImage(self.image)
 
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image)
+
+            fix_len = 47
+
             if outer_radius > inner_radius:
                 if self.unit_scale is not None:
-                    self.radius_label.config(text=str((outer_radius - inner_radius) * self.unit_scale) + " Unit")
+                    self.radius_label.config(text=(str((outer_radius - inner_radius) * self.unit_scale) + " Unit").ljust(fix_len))
                 else:
-                    self.radius_label.config(text=str(outer_radius - inner_radius) + " Pixels (Unknown Unit)")
+                    self.radius_label.config(text=(str(outer_radius - inner_radius) + " Pixels (Unknown Unit)").ljust(fix_len))
             else:
                 self.radius_label.config(text="Err Radius, Please fine-tuning threshold3")
 
