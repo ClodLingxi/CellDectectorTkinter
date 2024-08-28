@@ -136,7 +136,7 @@ class ImageLoaderApp:
         folder_path = filedialog.askdirectory()
         if folder_path:
             self.image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path)
-                                if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif'))]
+                                if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             self.image_files.sort()
             self.current_image_index = 0
             self.show_image()
@@ -145,6 +145,8 @@ class ImageLoaderApp:
         if self.image_files and 0 <= self.current_image_index < len(self.image_files):
             img_path = self.image_files[self.current_image_index]
             self.original_image = Image.open(img_path)
+            if self.original_image.mode == 'RGBA':
+                self.original_image = self.original_image.convert('RGB')
             self.processed_image = self.original_image.copy()
 
             self.scale = 1.0
